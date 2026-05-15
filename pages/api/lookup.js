@@ -266,9 +266,21 @@ Respond with ONLY the JSON array. No other text.`;
     });
 
     const data    = await resp.json();
+
+    if (!resp.ok) {
+      throw new Error(`Groq API error ${resp.status}: ${data.error?.message || JSON.stringify(data)}`);
+    }
+
     const content = data.choices?.[0]?.message?.content || '';
+    if (!content) {
+      throw new Error(`Empty response from Groq: ${JSON.stringify(data)}`);
+    }
+
     const match   = content.match(/\[[\s\S]*\]/);
-    if (!match) throw new Error('JSON not found in Groq response');
+    if (!match) {
+      throw new Error(`JSON not found in Groq response: ${content.slice(0, 200)}`);
+    }
+
     const parsed  = JSON.parse(match[0]);
 
     return parsed.map(item => ({
