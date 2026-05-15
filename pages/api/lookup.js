@@ -1,51 +1,83 @@
+import fs   from 'fs';
+import path from 'path';
+
+const CACHE_DIR = path.join(process.cwd(), '.vocab-cache');
+const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30일
+
+function readCache(word) {
+  try {
+    const file = path.join(CACHE_DIR, `${word.toLowerCase()}.json`);
+    if (!fs.existsSync(file)) return null;
+    const { cachedAt, data } = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (Date.now() - cachedAt > CACHE_TTL) return null;
+    return data;
+  } catch { return null; }
+}
+
+function writeCache(word, data) {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(
+      path.join(CACHE_DIR, `${word.toLowerCase()}.json`),
+      JSON.stringify({ cachedAt: Date.now(), data })
+    );
+  } catch (e) { console.error('cache write error:', e.message); }
+}
+
 export default async function handler(req, res) {
   const { word } = req.query;
   if (!word) return res.status(400).json({ error: 'word required' });
 
+  // 캐시 히트 시 즉시 반환
+  const cached = readCache(word);
+  if (cached) {
+    res.setHeader('X-Cache', 'HIT');
+    return res.json(cached);
+  }
+
   try {
-    // 1. 영어 사전 데이터
-    const dictRes = await fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`
-    );
+    // 1. 발음은 Free Dictionary API, 정의는 Wiktionary (병렬 요청)
+    const [dictRes, wikiMeanings] = await Promise.all([
+      fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`),
+      fetchWiktionary(word),
+    ]);
+
     if (!dictRes.ok) return res.status(404).json({ error: `"${word}" 단어를 찾을 수 없습니다.` });
     const [entry] = await dictRes.json();
-
     const pronunciation = entry.phonetics?.find(p => p.text)?.text?.replace(/\//g, '') || '';
 
-    // 2. 품사 그룹 선택 (예문 있는 그룹 우선)
-    const allGroups = entry.meanings.slice(0, 4).map(m => {
-      const withEx    = m.definitions.filter(d => d.example?.trim());
-      const withoutEx = m.definitions.filter(d => !d.example?.trim());
-      return {
-        pos:        m.partOfSpeech,
-        defs:       [...withEx, ...withoutEx].slice(0, withEx.length >= 2 ? 2 : 1),
-        hasExample: withEx.length > 0,
-      };
-    }).filter(m => m.defs.length > 0);
+    // 2. 정의 소스: Wiktionary 우선, 실패 시 Free Dictionary 폴백
+    const allGroups = (wikiMeanings && wikiMeanings.length > 0)
+      ? wikiMeanings
+      : entry.meanings.slice(0, 4).map(m => ({
+          pos: m.partOfSpeech,
+          defs: m.definitions
+            .filter(d => d.definition && d.definition.length > 15)
+            .slice(0, 6)
+            .map(d => ({ definition: d.definition, labels: [], example: d.example || null })),
+        })).filter(m => m.defs.length > 0);
 
-    const groupsWithEx = allGroups.filter(m => m.hasExample);
-    const rawMeanings  = (groupsWithEx.length > 0 ? groupsWithEx : allGroups).slice(0, 2);
-
-    if (rawMeanings.length === 0) {
+    if (allGroups.length === 0) {
       return res.status(404).json({ error: `"${word}" 정의를 찾을 수 없습니다.` });
     }
 
-    // 3. Groq 1차: 한국어 키워드 + 예문 생성
-    let groqData = await groqEnrich(word, rawMeanings);
+    // 3. Groq: 정의 선택 + 한국어 번역 + 예문 생성 (Groq가 자율 선택)
+    let groqData = await groqEnrich(word, allGroups);
 
-    // 4. 이중 체크: 품사-형태 불일치 항목 교정
+    // 4. 품사 불일치 + 중복 한국어 교정
     if (groqData) {
       const failIdx = [];
-      let gi = 0;
-      for (const m of rawMeanings) {
-        for (const d of m.defs) {
-          const item = groqData[gi];
-          if (item && !isValidKorean(item.korean, m.pos)) {
-            failIdx.push({ gi, pos: m.pos, english: d.definition });
-          }
-          gi++;
+      const seenKorean = new Set();
+      groqData.forEach((item, i) => {
+        const k = item.korean;
+        const invalid   = !isValidKorean(k, item.pos);
+        const duplicate = k && seenKorean.has(k);
+        if (invalid || duplicate) {
+          failIdx.push({ gi: i, pos: item.pos, english: item.englishShort, existing: [...seenKorean] });
+        } else if (k) {
+          seenKorean.add(k);
         }
-      }
+      });
       if (failIdx.length > 0) {
         const corrections = await groqCorrect(word, failIdx);
         if (corrections) {
@@ -56,25 +88,39 @@ export default async function handler(req, res) {
       }
     }
 
-    // 5. 결과 조합
-    let gi = 0;
-    const assembled = rawMeanings.map(m => ({
-      pos: posAbbr(m.pos),
-      definitions: m.defs.map(d => {
-        const g       = groqData?.[gi++] || {};
-        const exEn    = g.exampleEn?.trim() || d.example?.trim() || '';
-        const english = g.englishShort?.trim() || truncateDef(d.definition);
-        return {
-          korean:  g.korean  || word,
-          english,
-          synonym: d.synonyms?.[0] || '',
-          example: exEn
-            ? { en: splitExample(exEn, word), ko: g.exampleKo || '' }
-            : null,
-          subNote: null,
-        };
-      }),
-    }));
+    // 5. 최종 필터: "하다" 단독 / 비정상 항목 제거
+    if (groqData) {
+      groqData = groqData.filter(item => item.korean && item.korean.trim() !== '하다');
+    }
+
+    // 6. 결과 조합: groqData의 pos 기준으로 그룹핑
+    const posOrder = [];
+    const posBuckets = {};
+    for (const item of groqData || []) {
+      const p = item.pos || 'noun';
+      if (!posBuckets[p]) { posBuckets[p] = []; posOrder.push(p); }
+      posBuckets[p].push(item);
+    }
+    // groqData 없으면 allGroups 원문 그대로 폴백
+    const assembled = posOrder.length > 0
+      ? posOrder.map(p => ({
+          pos: posAbbr(p),
+          definitions: posBuckets[p].map(g => ({
+            korean:  g.korean || word,
+            english: g.englishShort || '',
+            synonym: '',
+            example: g.exampleEn
+              ? { en: splitExample(g.exampleEn, word), ko: g.exampleKo || '' }
+              : null,
+            subNote: null,
+          })),
+        }))
+      : allGroups.slice(0, 2).map(m => ({
+          pos: posAbbr(m.pos),
+          definitions: m.defs.slice(0, 4).map(d => ({
+            korean: word, english: truncateDef(d.definition), synonym: '', example: null, subNote: null,
+          })),
+        }));
 
     // 6. exampleKo에 한자가 남아 있으면 해당 예문만 재번역
     const retranslateTargets = [];
@@ -92,9 +138,13 @@ export default async function handler(req, res) {
       });
     }
 
-    const meanings = assembled;
+    const result = { word: entry.word, pronunciation, related: [], meanings: assembled };
 
-    res.json({ word: entry.word, pronunciation, related: [], meanings });
+    // Groq 결과가 있을 때만 캐시 저장 (폴백 원문은 저장 안 함)
+    if (groqData) writeCache(word, result);
+
+    res.setHeader('X-Cache', 'MISS');
+    res.json(result);
   } catch (e) {
     console.error('lookup error:', e);
     res.status(500).json({ error: e.message });
@@ -107,7 +157,10 @@ function isValidKorean(korean, pos) {
   if (!korean) return false;
   const k = korean.trim();
   if (k.length > 14) return false;
-  if (/[一-鿿㐀-䶿]/.test(k)) return false; // 한자 포함 시 교정
+  // 한자, 일본어, 태국어 등 비한글 문자 포함 시 교정
+  if (/[一-鿿㐀-䶿฀-๿Ѐ-ӿ؀-ۿ]/.test(k)) return false;
+  // 순수 한글이 전혀 없으면 교정
+  if (!/[가-힣ᄀ-ᇿ㄰-㆏]/.test(k)) return false;
 
   // 콤마로 묶인 경우 각 부분을 개별 검증
   const parts = k.split(',').map(p => p.trim()).filter(Boolean);
@@ -125,23 +178,70 @@ function isValidKoreanWord(k, pos) {
     return /[한는인적]$/.test(k) || /스럽다$/.test(k) || /없다$/.test(k) || /있다$/.test(k);
   }
   if (pos === 'verb') {
+    if (k === '하다') return false; // 어미만 단독으로 나온 경우
     return k.endsWith('다');
   }
   if (pos === 'noun') {
     return !k.endsWith('하다') && !k.endsWith('적인') && !k.endsWith('는');
   }
+  if (pos === 'adverb') {
+    // 부사: 동사/형용사형 거부 (하다, 이다, 한, 는 어미)
+    if (k.endsWith('하다') || k.endsWith('이다')) return false;
+    if (k.endsWith('한') || k.endsWith('는')) return false;
+    return true;
+  }
   return true;
+}
+
+// ── Groq fetch with key rotation + 429 retry ─────────────────────
+const GROQ_KEYS = [
+  process.env.GROQ_API_KEY,
+  process.env.GROQ_API_KEY_2,
+  process.env.GROQ_API_KEY_3,
+].filter(Boolean);
+
+async function groqFetch(payload) {
+  for (const key of GROQ_KEYS) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (resp.status === 429) {
+        const msg = data.error?.message || '';
+        // TPD(일일 한도) 초과 → 다음 키로 전환
+        if (msg.includes('tokens_per_day') || msg.includes('per_day') || msg.includes('Daily')) break;
+        // TPM(분당 한도) → 잠깐 기다리고 같은 키로 재시도
+        if (attempt === 2) break; // 재시도 3번 실패 시 다음 키로
+        const m = msg.match(/try again in (\d+\.?\d*)s/);
+        await new Promise(r => setTimeout(r, m ? Math.ceil(parseFloat(m[1]) * 1000) + 300 : 7000));
+        continue;
+      }
+      if (!resp.ok) throw new Error(`Groq API error ${resp.status}: ${data.error?.message || JSON.stringify(data)}`);
+      return data;
+    }
+  }
+  throw new Error('All Groq API keys exhausted (rate limit)');
 }
 
 // ── Groq 2차: 품사 불일치 항목만 교정 ───────────────────────────
 async function groqCorrect(word, failItems) {
   try {
-    const lines = failItems.map(({ pos, english }, i) => {
+    const lines = failItems.map(({ pos, english, existing }, i) => {
       const rule =
         pos === 'adjective' ? '형용사 → 반드시 ~한/~는/~적인/~스러운 형태 (예: 빈정대는, 효율적인, 모호한)' :
-        pos === 'verb'      ? '동사 → 실제 한국어 동사 ~하다 형태 (야기하다, 초래하다, 수반하다). "명사+하다" 조합 금지 — 결과하다/원인하다처럼 명사에 하다 붙인 것 사용 불가' :
+        pos === 'verb'      ? '동사 → 실제 한국어 동사 ~하다 형태 (야기하다, 초래하다, 수반하다). "명사+하다" 조합 금지' :
+        pos === 'adverb'    ? '부사 → 부사 형태 (~히, ~게, ~적으로, ~이, 또는 독립 부사). 예: 불가피하게, 필연적으로, 당연히, 결국. 동사/형용사형(~하다/~한) 절대 금지' :
                               '명사 → 단일 명사, ~하다/~적인 금지 (예: 원인, 근거)';
-      return `[${i + 1}] ${pos} | "${english}" | ${rule}`;
+      const dupNote = existing?.length
+        ? ` ⚠ DUPLICATE DETECTED — existing words already used: [${existing.join(', ')}]. Choose a COMPLETELY DIFFERENT word.`
+        : '';
+      return `[${i + 1}] ${pos} | "${english}" | ${rule}${dupNote}`;
     }).join('\n');
 
     const prompt =
@@ -152,25 +252,17 @@ ${lines}
 Return ONLY a JSON array of corrected Korean strings, same order:
 ["교정된 한국어1", "교정된 한국어2", ...]
 
-Rules: SHORT (1 word max), Naver Dictionary headword style, match the part of speech form exactly.
-Hangul (한글) ONLY — absolutely NO Chinese characters or Hanja (漢字).
-No explanation. JSON only.`;
+Rules: SHORT (1 word max), Naver Dictionary headword style, match part of speech exactly.
+Hangul (한글) ONLY — NO Chinese/Hanja. No explanation. JSON only.
+CRITICAL: NEVER return just "하다" alone — always return a full meaningful verb like 일탈하다, 벗어나다, 포함하다.`;
 
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 200,
-        temperature: 0.1,
-      }),
+    const data    = await groqFetch({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 200,
+      temperature: 0.1,
     });
 
-    const data    = await resp.json();
     const content = data.choices?.[0]?.message?.content || '';
     const match   = content.match(/\[[\s\S]*?\]/);
     if (!match) return null;
@@ -181,109 +273,92 @@ No explanation. JSON only.`;
   }
 }
 
-// ── Groq 1차: 한국어 + 예문 생성 ────────────────────────────────
-async function groqEnrich(word, meanings) {
+// ── Groq: 정의 자율 선택 + 한국어 번역 ──────────────────────────
+async function groqEnrich(word, allGroups) {
   try {
-    let idx = 0;
-    const defLines = meanings.flatMap(m =>
-      m.defs.map(d => {
-        idx++;
-        const ex = d.example?.trim() ? `\n   예문: ${d.example.trim()}` : '';
-        return `[${idx}] ${m.pos} — ${d.definition}${ex}`;
-      })
-    ).join('\n\n');
+    // 각 POS 그룹의 정의를 라벨 포함해 나열 (최대 8개/그룹)
+    const defsByPos = allGroups.map(({ pos, defs }) => {
+      const lines = defs.slice(0, 8).map((d, i) => {
+        const tag = d.labels?.length ? `(${d.labels.join(', ')}) ` : '';
+        const ex  = d.example ? ` | e.g. "${d.example.slice(0, 70)}"` : '';
+        return `  ${i + 1}. ${tag}${d.definition.slice(0, 110)}${ex}`;
+      }).join('\n');
+      return `[${pos}]\n${lines}`;
+    }).join('\n\n');
 
     const prompt =
 `You are a Korean-English vocabulary textbook editor (능률보카, 수능영단어 style).
-For the English word "${word}", provide Korean dictionary content for each definition below.
 
-${defLines}
+For the English word "${word}", below are ALL available definitions grouped by part of speech.
 
-Respond with a JSON array in the same order:
+YOUR TASK — two steps:
+STEP 1 · SELECT the 3–6 most important definitions for Korean high school / college entrance exam (수능) preparation.
+  Selection priority (highest first):
+  1. Grammar / linguistic terms → ALWAYS include if present (e.g. 보어 for grammatical complement — this is CRITICAL in Korean EFL education)
+  2. High-frequency everyday meanings — abstract, academic, literary contexts
+  3. Domain-specific meanings students encounter (set theory → 여집합, optics/color → 보색, nautical full-crew → 정원)
+  4. SKIP: highly technical computing, biochemistry, music-instrument, electronics definitions
+  5. SKIP: archaic, rare, or obsolete usages
+  6. If the word has both important noun AND verb uses, include BOTH parts of speech
+  7. Within each POS, order selected meanings by frequency (most common first)
+
+STEP 2 · For each selected definition, fill in the JSON fields.
+
+ALL AVAILABLE DEFINITIONS:
+${defsByPos}
+
+Return ONLY a JSON array — each entry MUST include "pos":
 [
   {
+    "pos": "noun",
     "korean": "핵심 한국어 의미",
-    "englishShort": "concise English definition",
-    "exampleEn": "example sentence",
+    "englishShort": "concise English definition (max 70 chars)",
+    "exampleEn": "example sentence using ${word}",
     "exampleKo": "한국어 번역"
   }
 ]
 
-STRICT RULES for "korean" field — part of speech MUST match:
-- adjective → MUST end in ~한/~는/~적인/~스러운 (비꼬는, 효율적인, 모호한, 탄력있는)
-- verb      → MUST end in ~하다, using ONLY established Korean verbs
-              Good: 야기하다, 초래하다, 지속하다, 발생하다, 적용하다, 수반하다, 초과하다
-              BAD (forbidden): stem = direct Korean translation of the English word + 하다
-              e.g. result→결과하다 ✗ (결과 is a noun, not a verb stem), apply→적용하다 ✓ (real verb)
-              If no natural ~하다 verb exists, use a different verb form (초래하다, 낳다, 생기다)
-- noun      → single concise noun, NO verb/adj suffix (원인, 근거, 이유, 발판)
-- MAX 2 words joined by comma (e.g. "야기하다, 초래하다"), MAX 12 characters total
-- NEVER: long phrases, English words, Chinese/Japanese characters (漢字), definitions as headword
-- MUST use Hangul (한글) ONLY — no 漢字, no Hanja, no Chinese, no Japanese
-- Every entry's "korean" MUST be distinct from all others in the array. No word may appear in more than one entry.
-  Check carefully: if entry [1] uses 적용, then entry [2] MUST NOT use 적용 at all — use 활용, 응용, 지원 etc.
-- If two senses are genuinely close, use a comma pair of near-synonyms (야기하다, 초래하다) for ONE entry, and a different word for the other.
-- "적용시키기", "결과물내기" style nominalizations are NOT valid headwords — use concise nouns only.
+RULES for "korean" — part of speech form MUST match:
+- adjective → ~한/~는/~적인/~스러운 (모호한, 효율적인, 비꼬는)
+- verb      → ~하다 using ONLY real Korean verbs (포함하다 ✓, 결과하다 ✗)
+              CRITICAL: 야기하다/초래하다 means "cause/bring about" ONLY — NEVER use for show/reflect/produce/imagine/conceive
+              Examples: reflect→반영하다, yield→산출하다, conceive→상상하다, manifest→나타내다
+- noun      → concise single noun, no ~하다/~적인 suffix (원인, 근거, 보어, 정원)
+- adverb    → ~히/~게/~적으로 or standalone (불가피하게, 당연히, 결국)
+- MAX 12 characters, Hangul ONLY (no Chinese/Hanja/English)
+- Every "korean" in the array MUST be UNIQUE — no repeats across all entries
+- Comma pair allowed for very close synonyms: "야기하다, 초래하다"
 
 RULES for "englishShort":
-- A concise rewrite of the definition above — plain English, max 70 characters
-- Must be semantically consistent with "korean" (same meaning, same sense)
-- No parenthetical qualifications, no "especially", no "as in ..."
-- Example good: "Expressing bitter or mocking humor"
-- Example bad:  "Marked by or given to using irony in order to mock or convey contempt (as in sarcastic remarks)"
+- Plain concise rewrite, max 70 chars
+- Add domain label in brackets when helpful: [grammar], [set theory], [color theory], [nautical]
 
 RULES for "exampleEn":
-- The sentence MUST contain the word "${word}" (exact form or natural inflection)
-- The word MUST be used in the same part of speech as the definition (verb def → use "${word}" as a verb; noun def → as a noun)
-  BAD: verb def for "result" but example says "The result of planning" (noun usage) ✗
-  GOOD: verb def for "result" → "Poor planning resulted in widespread delays." ✓
-- MINIMUM 12 words. Short sentences like "He gave an ambiguous answer." are NOT acceptable.
-- The sentence must show a REAL-WORLD CONTEXT — who, where, or why — so a learner understands when this word is used.
-  BAD: "He gave an ambiguous answer." (no context, too short)
-  GOOD: "The politician's ambiguous statements about the tax policy left voters confused and frustrated."
-- If a provided example is long enough (12+ words) and contains "${word}", reproduce it exactly.
-- Otherwise write a NEW sentence of 12–20 words that is vivid, contextual, and uses "${word}" naturally.
+- MUST contain "${word}" (exact or inflected form)
+- MUST use "${word}" in the SAME part of speech as this definition
+- MINIMUM 12 words, real-world context (who/where/why)
 
 RULES for "exampleKo":
-- Natural Korean translation of exampleEn
-- Colloquial and fluid, not literal
-- Hangul (한글) ONLY — absolutely NO Chinese characters or Hanja (漢字/한자)
+- Natural, colloquial Korean — Hangul ONLY, no Chinese characters
 
-Respond with ONLY the JSON array. No other text.`;
+No other text. JSON array only.`;
 
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 700,
-        temperature: 0.15,
-      }),
+    const data = await groqFetch({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 1600,
+      temperature: 0.15,
     });
 
-    const data    = await resp.json();
-
-    if (!resp.ok) {
-      throw new Error(`Groq API error ${resp.status}: ${data.error?.message || JSON.stringify(data)}`);
-    }
-
     const content = data.choices?.[0]?.message?.content || '';
-    if (!content) {
-      throw new Error(`Empty response from Groq: ${JSON.stringify(data)}`);
-    }
+    if (!content) throw new Error(`Empty Groq response: ${JSON.stringify(data)}`);
 
-    const match   = content.match(/\[[\s\S]*\]/);
-    if (!match) {
-      throw new Error(`JSON not found in Groq response: ${content.slice(0, 200)}`);
-    }
+    const match = content.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error(`No JSON in Groq response: ${content.slice(0, 200)}`);
 
-    const parsed  = JSON.parse(match[0]);
-
+    const parsed = JSON.parse(match[0]);
     return parsed.map(item => ({
+      pos:          (item.pos || 'noun').toLowerCase(),
       korean:       cleanField(item.korean),
       englishShort: cleanField(item.englishShort),
       exampleEn:    cleanField(item.exampleEn),
@@ -318,20 +393,12 @@ Return ONLY a JSON array of Korean strings, same order:
 ["번역1", "번역2"]
 No explanation. JSON only.`;
 
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 400,
-        temperature: 0.1,
-      }),
+    const data    = await groqFetch({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 400,
+      temperature: 0.1,
     });
-    const data    = await resp.json();
     const content = data.choices?.[0]?.message?.content || '';
     const match   = content.match(/\[[\s\S]*?\]/);
     if (!match) return [];
@@ -372,6 +439,98 @@ function posAbbr(pos) {
     { noun:'n.', verb:'v.', adjective:'adj.', adverb:'adv.',
       preposition:'prep.', conjunction:'conj.', pronoun:'pron.', interjection:'interj.' }[pos] || pos
   );
+}
+
+// ── Wiktionary API ───────────────────────────────────────────────
+async function fetchWiktionary(word) {
+  try {
+    const url = `https://en.wiktionary.org/w/api.php?action=parse&page=${encodeURIComponent(word.toLowerCase())}&prop=wikitext&format=json&origin=*`;
+    const resp = await fetch(url, { headers: { 'User-Agent': 'VocabApp/1.0 (educational)' } });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const wikitext = data?.parse?.wikitext?.['*'];
+    return wikitext ? parseWiktionaryMeanings(wikitext) : null;
+  } catch (e) {
+    console.error('Wiktionary error:', e.message);
+    return null;
+  }
+}
+
+const VALID_POS   = new Set(['noun', 'verb', 'adjective', 'adverb', 'preposition', 'conjunction', 'pronoun', 'interjection']);
+// Groq가 선택을 담당하므로 명백히 부적절한 것(고어/희귀어)만 코드에서 제거
+const SKIP_LABELS = new Set(['obsolete', 'archaic', 'dated', 'rare', 'dialectal', 'historical', 'now rare', 'now obsolete']);
+
+function cleanWikitext(text) {
+  return text
+    .replace(/\{\{lb\|en\|[^}]+\}\}/g, '')
+    .replace(/\{\{ux\|en\|([^|{}]+)[^}]*\}\}/g, (_, s) => s)
+    .replace(/\{\{(?:w|l|m|U|u|link)\|(?:[^|]+\|)?([^|}]+)[^}]*\}\}/g, '$1')
+    .replace(/\{\{[^}]+\}\}/g, '')
+    .replace(/\[\[([^\]|]+\|)?([^\]]+)\]\]/g, '$2')
+    .replace(/'{2,}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseWiktionaryMeanings(text) {
+  const engMatch = text.match(/==English==([\s\S]*?)(?=\n==[^=]|$)/);
+  if (!engMatch) return null;
+  const eng = engMatch[1];
+
+  // h4에 유효 POS가 있으면 h4(Etymology 포함 단어), 없으면 h3
+  const h4 = [...eng.matchAll(/====([^=]+)====([\s\S]*?)(?=\n====|n===|$)/g)];
+  const h3 = [...eng.matchAll(/===([^=]+)===([\s\S]*?)(?=\n===|$)/g)];
+  const h4HasPos = h4.some(([, pos]) => VALID_POS.has(pos.trim().toLowerCase()));
+  const sections = h4HasPos ? h4 : h3;
+
+  const posMap = new Map();
+
+  for (const [, posRaw, content] of sections) {
+    const pos = posRaw.trim().toLowerCase();
+    if (!VALID_POS.has(pos)) continue;
+
+    const lines = content.split('\n');
+    const defs = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!/^# (?![*:])/.test(line)) continue;
+
+      const labelMatch = line.match(/\{\{(?:lb|label)\|en\|([^}]+)\}\}/);
+      const labels = labelMatch ? labelMatch[1].split('|').map(s => s.trim().toLowerCase()) : [];
+      if (labels.some(l => SKIP_LABELS.has(l))) continue;
+
+      const defText = cleanWikitext(line.slice(2));
+      if (!defText || defText.length < 12) continue;
+
+      // 바로 다음 라인에서 예문 추출
+      let example = null;
+      if (i + 1 < lines.length && /^#[*:]/.test(lines[i + 1])) {
+        const exMatch = lines[i + 1].match(/\{\{ux\|en\|([^|{}]+)/);
+        if (exMatch) example = cleanWikitext(exMatch[1]);
+      }
+
+      defs.push({ definition: defText, example, labels });
+    }
+
+    if (defs.length === 0) continue;
+
+    // 라벨 없는 일반 정의를 앞에 배치, 나머지는 원순서 유지 → 최대 8개
+    const noLabel = defs.filter(d => d.labels.length === 0);
+    const labeled = defs.filter(d => d.labels.length > 0);
+    const ordered = [...noLabel, ...labeled].slice(0, 8);
+
+    if (!posMap.has(pos)) posMap.set(pos, []);
+    posMap.get(pos).push(...ordered);
+  }
+
+  // Groq에 넘길 모든 POS 그룹 (최대 4 POS, 각 최대 8개)
+  const result = [...posMap.entries()]
+    .filter(([, defs]) => defs.length > 0)
+    .slice(0, 4)
+    .map(([pos, defs]) => ({ pos, defs: defs.slice(0, 8) }));
+
+  return result.length > 0 ? result : null;
 }
 
 function splitExample(sentence, word) {
