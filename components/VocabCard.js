@@ -15,6 +15,8 @@ function ExSentence({ parts }) {
 
 function CardBody({ data, num, onDelete, onEdit, printMode }) {
   const cls = printMode ? styles.cardPrint : styles.card;
+  const leftCls = styles.leftCol;
+  const rightCls = styles.rightCol;
   const [confirming, setConfirming] = useState(false);
   const timer = useRef(null);
 
