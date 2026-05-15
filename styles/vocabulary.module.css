@@ -1,0 +1,170 @@
+.page {
+  max-width: 680px;
+  margin: 40px auto;
+  padding: 0 20px;
+  font-family: "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+  color: #1a1a1a;
+}
+
+.entry {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 24px 28px;
+  margin-bottom: 24px;
+  background: #fff;
+}
+
+/* 번호 */
+.entryNumber {
+  font-size: 11px;
+  font-weight: 700;
+  color: #555;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+
+/* 표제어 + 발음 */
+.headRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.headword {
+  font-size: 26px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.pronunciation {
+  font-size: 14px;
+  color: #555;
+}
+
+/* 연관 단어 */
+.related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #ebebeb;
+}
+
+.relatedItem {
+  font-size: 12px;
+  color: #444;
+}
+
+.relatedItem::before {
+  content: "ⓒ";
+  margin-right: 3px;
+  color: #888;
+  font-size: 11px;
+}
+
+.relatedWord {
+  font-weight: 600;
+  color: #2563eb;
+}
+
+/* 품사 그룹 */
+.posGroup {
+  margin-bottom: 12px;
+}
+
+.pos {
+  font-size: 13px;
+  font-weight: 700;
+  font-style: italic;
+  color: #444;
+  margin-bottom: 6px;
+}
+
+/* 개별 뜻 */
+.definition {
+  margin-bottom: 14px;
+  padding-left: 4px;
+}
+
+.meaningRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.defNumber {
+  font-size: 13px;
+  color: #555;
+  min-width: 18px;
+}
+
+.koreanMeaning {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.englishDef {
+  font-size: 12px;
+  color: #666;
+}
+
+.synonym {
+  font-size: 12px;
+  color: #666;
+}
+
+.synonymWord {
+  font-weight: 600;
+  color: #555;
+}
+
+/* 예문 */
+.example {
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: #f7f8fa;
+  border-radius: 4px;
+  border-left: 3px solid #2563eb;
+}
+
+.exampleEn {
+  font-size: 13px;
+  color: #222;
+  line-height: 1.6;
+  margin-bottom: 2px;
+}
+
+.exampleKeyword {
+  font-weight: 700;
+}
+
+.exampleKo {
+  font-size: 12px;
+  color: #666;
+  line-height: 1.5;
+}
+
+/* 서브노트 (└ liberation 해방) */
+.subNote {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  padding-left: 8px;
+  font-size: 12px;
+  color: #555;
+}
+
+.subNoteArrow {
+  color: #aaa;
+}
+
+.subNoteWord {
+  font-weight: 600;
+  color: #2563eb;
+}

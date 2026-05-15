@@ -1,0 +1,368 @@
+/* ══════════════════════════════════════════
+   VocabCard  —  PNG 이미지와 동일한 레이아웃
+   2단: 왼쪽(표제어·발음·관련어) / 오른쪽(뜻·예문)
+   ══════════════════════════════════════════ */
+
+.card {
+  width: 100%;
+  background: #fff;
+  border: 1px solid #e0e2e8;
+  border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  position: relative;
+  font-family: 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif;
+  box-sizing: border-box;
+  animation: cardIn 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 버튼 그룹 */
+.actions {
+  position: absolute;
+  top: 10px; right: 10px;
+  display: flex;
+  gap: 5px;
+}
+
+.editBtn {
+  width: 26px; height: 26px;
+  background: #eff6ff;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #2563eb;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+.editBtn:hover { background: #2563eb; color: #fff; transform: scale(1.1); }
+
+.delBtn {
+  width: 26px; height: 26px;
+  background: #fee2e2;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ef4444;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s, transform 0.1s, width 0.2s;
+}
+.delBtn:hover { background: #ef4444; color: #fff; transform: scale(1.1); }
+
+.delBtnConfirm {
+  width: 52px; height: 26px;
+  background: #ef4444;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s, width 0.2s;
+  white-space: nowrap;
+  animation: shake 0.3s ease;
+}
+.delBtnConfirm:hover { background: #dc2626; }
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25%       { transform: translateX(-3px); }
+  75%       { transform: translateX(3px); }
+}
+
+/* ── 왼쪽 열 ── */
+.leftCol {
+  width: 150px;
+  min-width: 150px;
+  flex-shrink: 0;
+  padding-right: 14px;
+  border-right: 1px solid #eef0f3;
+}
+
+.num {
+  font-size: 10px;
+  font-weight: 700;
+  color: #aaa;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+}
+
+.headword {
+  font-size: 24px;
+  font-weight: 800;
+  color: #1a1a2e;
+  line-height: 1.15;
+  letter-spacing: -0.3px;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.phon {
+  font-size: 12px;
+  color: #888;
+  margin-top: 2px;
+  margin-bottom: 10px;
+}
+
+.relatedList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.relItem {
+  font-size: 10.5px;
+  color: #666;
+  line-height: 1.4;
+}
+.relItem::before {
+  content: 'ⓒ';
+  font-size: 9.5px;
+  color: #bbb;
+  margin-right: 3px;
+}
+.relWord {
+  font-weight: 600;
+  color: #2563eb;
+}
+
+/* ── 오른쪽 열 ── */
+.rightCol {
+  flex: 1;
+  min-width: 0;
+  padding-left: 14px;
+}
+
+/* POS 그룹 */
+.posGroup {
+  margin-bottom: 8px;
+}
+.posGroup + .posGroup {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #eef0f3;
+}
+
+.posLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.pos {
+  font-size: 12px;
+  font-weight: 700;
+  font-style: italic;
+  color: #333;
+}
+
+/* 개별 뜻 */
+.defItem {
+  margin-bottom: 8px;
+}
+
+.defLine {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+.circle {
+  font-size: 11.5px;
+  color: #666;
+  min-width: 15px;
+  flex-shrink: 0;
+}
+
+.kor {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+.engDef {
+  font-size: 10.5px;
+  color: #888;
+  line-height: 1.4;
+}
+
+.syn {
+  font-size: 10.5px;
+  color: #888;
+}
+.synWord {
+  font-weight: 600;
+  color: #666;
+}
+
+/* 예문 박스 */
+.exBox {
+  background: #f6f8fc;
+  border-left: 3px solid #2563eb;
+  border-radius: 0 4px 4px 0;
+  padding: 7px 10px;
+  margin-left: 16px;
+  margin-top: 3px;
+}
+
+.exEn {
+  font-size: 11.5px;
+  color: #1a1a2e;
+  line-height: 1.65;
+}
+.exEn strong { font-weight: 700; }
+
+.exKo {
+  font-size: 11px;
+  color: #777;
+  line-height: 1.55;
+  margin-top: 2px;
+}
+
+/* 서브노트 (└ liberation 해방) */
+.subNote {
+  font-size: 10.5px;
+  color: #888;
+  margin-top: 4px;
+  margin-left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Print 모드 (PDF) ── */
+.cardPrint {
+  width: 100%;
+  background: #fff;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  font-family: 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif;
+  box-sizing: border-box;
+  margin-bottom: 12px;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+/* html2canvas는 12px 미만 폰트에서 공백을 드롭하는 버그가 있음 — print 모드에서는 모두 12px 이상으로 고정 */
+.cardPrint .engDef  { font-size: 12px; }
+.cardPrint .exEn    { font-size: 12px; }
+.cardPrint .exKo    { font-size: 12px; }
+.cardPrint .relItem { font-size: 12px; }
+.cardPrint .syn     { font-size: 12px; }
+.cardPrint .circle  { font-size: 12px; }
+.cardPrint .num     { font-size: 11px; }
+.cardPrint .phon    { font-size: 12px; }
+.cardPrint .pos     { font-size: 12px; }
+
+/* ── 로딩 상태 ── */
+.loadingCard {
+  width: 100%;
+  background: #fff;
+  border: 1px solid #e0e2e8;
+  border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: row;
+  gap: 14px;
+  box-sizing: border-box;
+  animation: cardIn 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.loadingLeft {
+  width: 100px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.loadingRight {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.loadingWord {
+  font-size: 20px;
+  font-weight: 800;
+  color: #1a1a2e;
+  letter-spacing: -0.3px;
+}
+
+.skeleton {
+  height: 11px;
+  background: #f0f2f5;
+  border-radius: 20px;
+  overflow: hidden;
+  position: relative;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.7), transparent);
+  animation: shimmer 1.4s infinite;
+}
+.skeleton.short  { width: 40%; }
+.skeleton.medium { width: 65%; }
+.skeleton.long   { width: 92%; }
+
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* ── 에러 상태 ── */
+.errorCard {
+  width: 100%;
+  background: #fff;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+}
+
+.errorWord  { font-size: 18px; font-weight: 800; color: #1a1a2e; }
+.errorMsg   { font-size: 12px; color: #ef4444; }
+.errorActions { display: flex; gap: 8px; margin-top: 2px; }
+
+.deleteBtn {
+  padding: 5px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  background: #fee2e2;
+  border: none;
+  border-radius: 5px;
+  color: #ef4444;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.deleteBtn:hover { background: #fef2f2; }
+
