@@ -1,15 +1,15 @@
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,700;1,400&display=swap');
-
 @font-face {
   font-family: 'Noto Sans KR';
   font-style: normal;
   font-weight: 400;
+  font-display: swap;
   src: url('/fonts/NotoSansKR-Regular.ttf') format('truetype');
 }
 @font-face {
   font-family: 'Noto Sans KR';
   font-style: normal;
   font-weight: 700;
+  font-display: swap;
   src: url('/fonts/NotoSansKR-Bold.ttf') format('truetype');
 }
 

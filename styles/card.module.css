@@ -366,3 +366,101 @@
 }
 .deleteBtn:hover { background: #fef2f2; }
 
+/* ── Mobile (≤ 768px) ── */
+@media (max-width: 768px) {
+  /* 카드: 1단 세로 레이아웃 */
+  .card {
+    flex-direction: column;
+    padding: 12px 14px 14px;
+    gap: 0;
+  }
+
+  /* 왼쪽 열 → 상단 헤더 행으로 변환 */
+  .leftCol {
+    width: 100%;
+    min-width: 0;
+    padding-right: 0;
+    padding-bottom: 10px;
+    border-right: none;
+    border-bottom: 1px solid #eef0f3;
+    margin-bottom: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 8px;
+  }
+
+  .num {
+    font-size: 9px;
+    width: 100%;
+    margin-bottom: 2px;
+  }
+
+  .headword {
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+
+  .phon {
+    font-size: 11px;
+    margin: 0;
+    color: #999;
+  }
+
+  .relatedList {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 6px;
+  }
+
+  /* 오른쪽 열 → 전체 너비 */
+  .rightCol {
+    padding-left: 0;
+    width: 100%;
+  }
+
+  /* 뜻 행 */
+  .kor    { font-size: 12.5px; }
+  .engDef { font-size: 10px; }
+  .syn    { font-size: 10px; }
+  .pos    { font-size: 11px; }
+  .circle { font-size: 11px; }
+
+  /* 예문 박스: 마진 줄이고 텍스트 줄바꿈 강제 */
+  .exBox {
+    margin-left: 6px;
+    padding: 6px 8px;
+    overflow: hidden;
+  }
+
+  .exEn {
+    font-size: 11px;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    hyphens: auto;
+  }
+
+  .exKo {
+    font-size: 10.5px;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  .subNote {
+    margin-left: 6px;
+    font-size: 10px;
+    flex-wrap: wrap;
+  }
+
+  /* 로딩 카드 */
+  .loadingCard {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .loadingLeft { width: 80px; }
+  .loadingWord { font-size: 17px; }
+}
+
