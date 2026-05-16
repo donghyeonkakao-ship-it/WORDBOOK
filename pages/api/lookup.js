@@ -233,15 +233,36 @@ async function markKeyExhausted(keyIndex) {
   } catch (e) { console.error('markKeyExhausted error:', e.message); }
 }
 
+async function getNextKeyIndex() {
+  if (!SUPABASE_URL || GROQ_KEYS.length <= 1) return 0;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/next_groq_key`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ key_count: GROQ_KEYS.length }),
+    });
+    if (!res.ok) return 0;
+    return await res.json(); // 0 ~ GROQ_KEYS.length-1
+  } catch { return 0; }
+}
+
 async function groqFetch(payload) {
   const deterministicPayload = { ...payload, temperature: 0, seed: 42 };
 
-  // Supabase에서 소진된 키 인덱스 로드 (인메모리에 없는 경우만)
+  // 소진된 키 로드 (인메모리 캐시 없을 때만 DB 조회)
   if (SUPABASE_URL && memExhaustedIdx.size === 0) {
     await loadExhaustedIndexes();
   }
 
-  for (let ki = 0; ki < GROQ_KEYS.length; ki++) {
+  // 라운드로빈: 이번 요청의 시작 키 인덱스를 Supabase에서 원자적으로 증가
+  const startIdx = await getNextKeyIndex();
+
+  for (let i = 0; i < GROQ_KEYS.length; i++) {
+    const ki = (startIdx + i) % GROQ_KEYS.length; // startIdx부터 순환
     if (memExhaustedIdx.has(ki)) continue; // 소진된 키 건너뜀
 
     const key = GROQ_KEYS[ki];
@@ -258,7 +279,7 @@ async function groqFetch(payload) {
       if (resp.status === 429) {
         const msg = data.error?.message || '';
         if (isDailyLimit(msg)) {
-          await markKeyExhausted(ki); // Supabase에 기록 + 인메모리에도 추가
+          await markKeyExhausted(ki);
           break; // 즉시 다음 키로
         }
         // 분당 한도(TPM): 대기 후 재시도
