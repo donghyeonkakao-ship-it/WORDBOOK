@@ -194,18 +194,57 @@ const GROQ_KEYS = [
   process.env.GROQ_API_KEY_3,
 ].filter(Boolean);
 
-// 일일 한도 소진된 키를 모듈 수준에서 기억 (서버 프로세스 생존 동안 유지)
-const dailyExhaustedKeys = new Set();
+// 인메모리 캐시 (같은 인스턴스 내 중복 DB 조회 방지)
+const memExhaustedIdx = new Set();
 
 function isDailyLimit(msg) {
   return /tokens\s+per\s+day|per.day.limit|daily.limit|\btpd\b/i.test(msg);
 }
 
+async function loadExhaustedIndexes() {
+  if (!SUPABASE_URL) return;
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/groq_key_status?exhausted_at=gte.${since}&select=key_index`,
+      { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    rows.forEach(r => memExhaustedIdx.add(r.key_index));
+  } catch (e) { console.error('loadExhaustedIndexes error:', e.message); }
+}
+
+async function markKeyExhausted(keyIndex) {
+  memExhaustedIdx.add(keyIndex);
+  if (!SUPABASE_URL) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/groq_key_status`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify({ key_index: keyIndex, exhausted_at: new Date().toISOString() }),
+    });
+    console.log(`Groq key[${keyIndex}] daily limit → saved to Supabase, rotating to next key`);
+  } catch (e) { console.error('markKeyExhausted error:', e.message); }
+}
+
 async function groqFetch(payload) {
   const deterministicPayload = { ...payload, temperature: 0, seed: 42 };
-  for (const key of GROQ_KEYS) {
-    if (dailyExhaustedKeys.has(key)) continue; // 이미 소진된 키는 건너뜀
 
+  // Supabase에서 소진된 키 인덱스 로드 (인메모리에 없는 경우만)
+  if (SUPABASE_URL && memExhaustedIdx.size === 0) {
+    await loadExhaustedIndexes();
+  }
+
+  for (let ki = 0; ki < GROQ_KEYS.length; ki++) {
+    if (memExhaustedIdx.has(ki)) continue; // 소진된 키 건너뜀
+
+    const key = GROQ_KEYS[ki];
     for (let attempt = 0; attempt < 3; attempt++) {
       const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -219,9 +258,8 @@ async function groqFetch(payload) {
       if (resp.status === 429) {
         const msg = data.error?.message || '';
         if (isDailyLimit(msg)) {
-          dailyExhaustedKeys.add(key); // 이 키 소진으로 기록, 즉시 다음 키로
-          console.log(`Groq key rotated (daily limit): ${key.slice(0, 8)}...`);
-          break;
+          await markKeyExhausted(ki); // Supabase에 기록 + 인메모리에도 추가
+          break; // 즉시 다음 키로
         }
         // 분당 한도(TPM): 대기 후 재시도
         if (attempt === 2) break;
