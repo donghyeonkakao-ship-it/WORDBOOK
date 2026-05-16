@@ -99,32 +99,29 @@ export default async function handler(req, res) {
       groqData = groqData.filter(item => item.korean && item.korean.trim() !== '하다');
     }
 
+    if (!groqData || groqData.length === 0) {
+      return res.status(503).json({ error: 'Groq API 한도 초과입니다. 잠시 후 ↻ 버튼으로 재시도해주세요.' });
+    }
+
     const posOrder = [];
     const posBuckets = {};
-    for (const item of groqData || []) {
+    for (const item of groqData) {
       const p = item.pos || 'noun';
       if (!posBuckets[p]) { posBuckets[p] = []; posOrder.push(p); }
       posBuckets[p].push(item);
     }
-    const assembled = posOrder.length > 0
-      ? posOrder.map(p => ({
-          pos: posAbbr(p),
-          definitions: posBuckets[p].map(g => ({
-            korean:  g.korean || word,
-            english: g.englishShort || '',
-            synonym: '',
-            example: g.exampleEn
-              ? { en: splitExample(g.exampleEn, word), ko: g.exampleKo || '' }
-              : null,
-            subNote: null,
-          })),
-        }))
-      : allGroups.slice(0, 2).map(m => ({
-          pos: posAbbr(m.pos),
-          definitions: m.defs.slice(0, 4).map(d => ({
-            korean: word, english: truncateDef(d.definition), synonym: '', example: null, subNote: null,
-          })),
-        }));
+    const assembled = posOrder.map(p => ({
+      pos: posAbbr(p),
+      definitions: posBuckets[p].map(g => ({
+        korean:  g.korean || word,
+        english: g.englishShort || '',
+        synonym: '',
+        example: g.exampleEn
+          ? { en: splitExample(g.exampleEn, word), ko: g.exampleKo || '' }
+          : null,
+        subNote: null,
+      })),
+    }));
 
     const retranslateTargets = [];
     assembled.forEach((m, mi) =>
