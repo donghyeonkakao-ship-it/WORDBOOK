@@ -18,6 +18,9 @@ export default function Home() {
   const [exporting, setExporting] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  const lookupQueue = useRef([]);
+  const isProcessing = useRef(false);
+
   const lookup = useCallback(async (word, projectId, entryId) => {
     try {
       const res = await fetch(`/api/lookup?word=${encodeURIComponent(word)}`);
@@ -32,16 +35,27 @@ export default function Home() {
     }
   }, [updateWord]);
 
+  const processQueue = useCallback(async () => {
+    if (isProcessing.current) return;
+    isProcessing.current = true;
+    while (lookupQueue.current.length > 0) {
+      const { word, projectId, entryId } = lookupQueue.current.shift();
+      await lookup(word, projectId, entryId);
+    }
+    isProcessing.current = false;
+  }, [lookup]);
+
   const handleAddWord = useCallback((word) => {
     if (!activeProject) return;
     if (activeProject.words.some(w => w.word === word && w.status !== 'error')) return;
     const entry = { id: crypto.randomUUID(), word, status: 'loading', data: null, error: null };
     addWord(activeProject.id, entry);
-    lookup(word, activeProject.id, entry.id);
+    lookupQueue.current.push({ word, projectId: activeProject.id, entryId: entry.id });
+    processQueue();
     setTimeout(() => {
       cardsRef.current?.scrollTo({ top: cardsRef.current.scrollHeight, behavior: 'smooth' });
     }, 60);
-  }, [activeProject, addWord, lookup]);
+  }, [activeProject, addWord, processQueue]);
 
   const handleExportPdf = async () => {
     if (!printRef.current || exporting) return;

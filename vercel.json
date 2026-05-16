@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "pages/api/lookup.js": {
+      "maxDuration": 30
+    }
+  }
+}
