@@ -194,9 +194,18 @@ const GROQ_KEYS = [
   process.env.GROQ_API_KEY_3,
 ].filter(Boolean);
 
+// 일일 한도 소진된 키를 모듈 수준에서 기억 (서버 프로세스 생존 동안 유지)
+const dailyExhaustedKeys = new Set();
+
+function isDailyLimit(msg) {
+  return /tokens\s+per\s+day|per.day.limit|daily.limit|\btpd\b/i.test(msg);
+}
+
 async function groqFetch(payload) {
   const deterministicPayload = { ...payload, temperature: 0, seed: 42 };
   for (const key of GROQ_KEYS) {
+    if (dailyExhaustedKeys.has(key)) continue; // 이미 소진된 키는 건너뜀
+
     for (let attempt = 0; attempt < 3; attempt++) {
       const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -209,10 +218,16 @@ async function groqFetch(payload) {
       const data = await resp.json();
       if (resp.status === 429) {
         const msg = data.error?.message || '';
-        if (msg.includes('tokens_per_day') || msg.includes('per_day') || msg.includes('Daily')) break;
+        if (isDailyLimit(msg)) {
+          dailyExhaustedKeys.add(key); // 이 키 소진으로 기록, 즉시 다음 키로
+          console.log(`Groq key rotated (daily limit): ${key.slice(0, 8)}...`);
+          break;
+        }
+        // 분당 한도(TPM): 대기 후 재시도
         if (attempt === 2) break;
-        const m = msg.match(/try again in (\d+\.?\d*)s/);
-        await new Promise(r => setTimeout(r, m ? Math.ceil(parseFloat(m[1]) * 1000) + 300 : 7000));
+        const secMatch = msg.match(/try again in (\d+\.?\d*)\s*s/i);
+        const waitMs = secMatch ? Math.ceil(parseFloat(secMatch[1]) * 1000) + 300 : 7000;
+        await new Promise(r => setTimeout(r, waitMs));
         continue;
       }
       if (!resp.ok) throw new Error(`Groq API error ${resp.status}: ${data.error?.message || JSON.stringify(data)}`);
@@ -269,10 +284,10 @@ CRITICAL: NEVER return just "하다" alone — always return a full meaningful v
 async function groqEnrich(word, allGroups) {
   try {
     const defsByPos = allGroups.map(({ pos, defs }) => {
-      const lines = defs.slice(0, 8).map((d, i) => {
+      const lines = defs.slice(0, 5).map((d, i) => {
         const tag = d.labels?.length ? `(${d.labels.join(', ')}) ` : '';
-        const ex  = d.example ? ` | e.g. "${d.example.slice(0, 70)}"` : '';
-        return `  ${i + 1}. ${tag}${d.definition.slice(0, 110)}${ex}`;
+        const ex  = d.example ? ` | e.g. "${d.example.slice(0, 50)}"` : '';
+        return `  ${i + 1}. ${tag}${d.definition.slice(0, 90)}${ex}`;
       }).join('\n');
       return `[${pos}]\n${lines}`;
     }).join('\n\n');
@@ -354,7 +369,7 @@ No other text. JSON array only.`;
     const data = await groqFetch({
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 1600,
+      max_tokens: 1100,
     });
 
     const content = data.choices?.[0]?.message?.content || '';
