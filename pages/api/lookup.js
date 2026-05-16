@@ -35,13 +35,15 @@ async function writeCache(word, data) {
 }
 
 export default async function handler(req, res) {
-  const { word } = req.query;
+  const { word, refresh } = req.query;
   if (!word) return res.status(400).json({ error: 'word required' });
 
-  const cached = await readCache(word);
-  if (cached) {
-    res.setHeader('X-Cache', 'HIT');
-    return res.json(cached);
+  if (!refresh) {
+    const cached = await readCache(word);
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json(cached);
+    }
   }
 
   try {
@@ -324,14 +326,31 @@ RULES for "korean" — part of speech form MUST match:
 RULES for "englishShort":
 - Plain concise rewrite, max 70 chars
 - Add domain label in brackets when helpful: [grammar], [set theory], [color theory], [nautical]
+- Must be a DIRECT, LITERAL description of the meaning — never paraphrase loosely
+- The "korean" field MUST be the exact Korean translation of this "englishShort"
+  Examples: "establish identity of" → 확인하다, "feel connection with" → 공감하다, "disclose the identity of" → 신원을 밝히다, "recognize and locate" → 식별하다
 
 RULES for "exampleEn":
 - MUST contain "${word}" (exact or inflected form)
-- MUST use "${word}" in the SAME part of speech as this definition
+- MUST use "${word}" in the SAME part of speech AND same sense as this definition
+- MUST use "${word}" in its most BASIC, STANDALONE usage — DO NOT use idiomatic collocations
+  (e.g., if defining "feel connection with", write: "Many readers ${word} with the struggles described in the memoir."
+   NOT: "${word} the concept and categorize it simultaneously" — that mixes two different verbs' meanings)
 - MINIMUM 12 words, real-world context (who/where/why)
+- The example must ONLY illustrate the one sense defined by "englishShort" — never blend meanings
 
 RULES for "exampleKo":
-- Natural, colloquial Korean — Hangul ONLY, no Chinese characters
+- Translate "exampleEn" faithfully and naturally — Hangul ONLY, no Chinese characters
+- The translation must match what "exampleEn" actually says, NOT a rephrasing of "korean"
+- NEVER translate more loosely than the English allows
+
+CRITICAL CONSISTENCY CHECK (verify before outputting each entry):
+1. "korean" must be the Korean translation of "englishShort" — they must match perfectly
+2. If "englishShort" = "disclose the identity of" → "korean" MUST be "신원을 밝히다" (NEVER "등장시키다")
+3. If "englishShort" = "recognize and locate" → "korean" MUST be "식별하다" (NEVER "구분하다" — that is "distinguish")
+4. If "englishShort" = "feel connection with" → "korean" MUST be "공감하다" or "동일시하다" (NEVER "인식하다")
+5. "exampleKo" must translate "exampleEn", not paraphrase "korean"
+6. Never let the example sentence define or override the "korean" label — the label comes from "englishShort"
 
 No other text. JSON array only.`;
 

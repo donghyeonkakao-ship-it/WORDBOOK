@@ -32,6 +32,19 @@
   gap: 5px;
 }
 
+.refreshBtn {
+  width: 26px; height: 26px;
+  background: #f0fdf4;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  color: #16a34a;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+.refreshBtn:hover { background: #16a34a; color: #fff; transform: scale(1.1); }
+
 .editBtn {
   width: 26px; height: 26px;
   background: #eff6ff;
@@ -351,6 +364,20 @@
 .errorWord  { font-size: 18px; font-weight: 800; color: #1a1a2e; }
 .errorMsg   { font-size: 12px; color: #ef4444; }
 .errorActions { display: flex; gap: 8px; margin-top: 2px; }
+
+.retryBtn {
+  padding: 5px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  background: #f0fdf4;
+  border: none;
+  border-radius: 5px;
+  color: #16a34a;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.retryBtn:hover { background: #16a34a; color: #fff; }
 
 .deleteBtn {
   padding: 5px 14px;

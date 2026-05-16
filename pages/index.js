@@ -21,9 +21,10 @@ export default function Home() {
   const lookupQueue = useRef([]);
   const isProcessing = useRef(false);
 
-  const lookup = useCallback(async (word, projectId, entryId) => {
+  const lookup = useCallback(async (word, projectId, entryId, refresh = false) => {
     try {
-      const res = await fetch(`/api/lookup?word=${encodeURIComponent(word)}`);
+      const url = `/api/lookup?word=${encodeURIComponent(word)}${refresh ? '&refresh=true' : ''}`;
+      const res = await fetch(url);
       const data = await res.json();
       if (res.ok) {
         updateWord(projectId, entryId, { status: 'loaded', data });
@@ -56,6 +57,12 @@ export default function Home() {
       cardsRef.current?.scrollTo({ top: cardsRef.current.scrollHeight, behavior: 'smooth' });
     }, 60);
   }, [activeProject, addWord, processQueue]);
+
+  const handleRefreshWord = useCallback((entry) => {
+    if (!activeProject) return;
+    updateWord(activeProject.id, entry.id, { status: 'loading', data: null, error: null });
+    lookup(entry.word, activeProject.id, entry.id, true);
+  }, [activeProject, updateWord, lookup]);
 
   const handleExportPdf = async () => {
     if (!printRef.current || exporting) return;
@@ -201,6 +208,7 @@ export default function Home() {
                     index={i}
                     onDelete={() => deleteWord(activeProject.id, entry.id)}
                     onEdit={() => setEditingEntry(entry)}
+                    onRefresh={() => handleRefreshWord(entry)}
                   />
                 ))}
                 {activeProject.words.length === 0 && (

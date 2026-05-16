@@ -13,7 +13,7 @@ function ExSentence({ parts }) {
   );
 }
 
-function CardBody({ data, num, onDelete, onEdit, printMode }) {
+function CardBody({ data, num, onDelete, onEdit, onRefresh, printMode }) {
   const cls = printMode ? styles.cardPrint : styles.card;
   const leftCls = styles.leftCol;
   const rightCls = styles.rightCol;
@@ -34,6 +34,7 @@ function CardBody({ data, num, onDelete, onEdit, printMode }) {
     <div className={cls}>
       {!printMode && (
         <div className={styles.actions}>
+          <button className={styles.refreshBtn} onClick={onRefresh} title="재생성">↻</button>
           <button className={styles.editBtn} onClick={onEdit} title="수정">✐</button>
           <button
             className={confirming ? styles.delBtnConfirm : styles.delBtn}
@@ -115,7 +116,7 @@ function CardBody({ data, num, onDelete, onEdit, printMode }) {
   );
 }
 
-export default function VocabCard({ entry, index, onDelete, onEdit, printMode = false }) {
+export default function VocabCard({ entry, index, onDelete, onEdit, onRefresh, printMode = false }) {
   const { word, status, data, error } = entry;
 
   if (status === 'loading') {
@@ -141,6 +142,7 @@ export default function VocabCard({ entry, index, onDelete, onEdit, printMode = 
         <span className={styles.errorWord}>{word}</span>
         <span className={styles.errorMsg}>{error}</span>
         <div className={styles.errorActions}>
+          <button className={styles.retryBtn} onClick={onRefresh}>재시도</button>
           <button className={styles.deleteBtn} onClick={onDelete}>삭제</button>
         </div>
       </div>
@@ -150,6 +152,6 @@ export default function VocabCard({ entry, index, onDelete, onEdit, printMode = 
   if (!data) return null;
 
   return (
-    <CardBody data={data} num={index + 1} onDelete={onDelete} onEdit={onEdit} printMode={printMode} />
+    <CardBody data={data} num={index + 1} onDelete={onDelete} onEdit={onEdit} onRefresh={onRefresh} printMode={printMode} />
   );
 }
