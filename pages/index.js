@@ -40,8 +40,8 @@ export default function Home() {
     if (isProcessing.current) return;
     isProcessing.current = true;
     while (lookupQueue.current.length > 0) {
-      const { word, projectId, entryId } = lookupQueue.current.shift();
-      await lookup(word, projectId, entryId);
+      const { word, projectId, entryId, refresh } = lookupQueue.current.shift();
+      await lookup(word, projectId, entryId, refresh);
     }
     isProcessing.current = false;
   }, [lookup]);
@@ -61,8 +61,11 @@ export default function Home() {
   const handleRefreshWord = useCallback((entry) => {
     if (!activeProject) return;
     updateWord(activeProject.id, entry.id, { status: 'loading', data: null, error: null });
-    lookup(entry.word, activeProject.id, entry.id, true);
-  }, [activeProject, updateWord, lookup]);
+    // 기존에 이 단어의 대기 중인 요청이 있으면 제거 후 맨 뒤에 추가
+    lookupQueue.current = lookupQueue.current.filter(q => q.entryId !== entry.id);
+    lookupQueue.current.push({ word: entry.word, projectId: activeProject.id, entryId: entry.id, refresh: true });
+    processQueue();
+  }, [activeProject, updateWord, processQueue]);
 
   const handleExportPdf = async () => {
     if (!printRef.current || exporting) return;
